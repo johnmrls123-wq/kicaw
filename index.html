@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Face Invaders: Final Cosmic Battle</title>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; color: white; }
+        
+        /* Layar Start */
+        #start-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle, #001529 0%, #000 100%);
+            display: flex; flex-direction: column; justify-content: center;
+            align-items: center; z-index: 100; text-align: center;
+        }
+        #start-btn {
+            padding: 15px 40px; font-size: 22px; font-weight: bold;
+            background: #00f2ff; border: none; border-radius: 50px;
+            color: #000; cursor: pointer; box-shadow: 0 0 20px #00f2ff;
+        }
+
+        #ui { position: absolute; top: 15px; left: 15px; z-index: 10; pointer-events: none; }
+        .hp-container {
+            width: 180px; height: 10px; background: #222; border: 1px solid #fff;
+            border-radius: 5px; margin-top: 5px; overflow: hidden;
+        }
+        #hp-bar { width: 100%; height: 100%; background: #00ff00; transition: width 0.2s; }
+        #stats { font-weight: bold; font-size: 16px; color: #00f2ff; }
+        
+        #warning {
+            position: absolute; top: 30%; left: 50%; transform: translate(-50%, -50%);
+            font-size: 28px; color: #ff0000; font-weight: bold; text-align: center;
+            display: none; z-index: 20; text-shadow: 0 0 15px #ff0000;
+            animation: blink 0.4s infinite;
+        }
+        @keyframes blink { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+
+        #boss-ui {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            width: 80%; text-align: center; display: none;
+        }
+        .boss-hp-bar { width: 100%; height: 10px; background: #300; border-radius: 5px; overflow: hidden; border: 1px solid red; }
+        #boss-hp { width: 100%; height: 100%; background: red; transition: width 0.3s; }
+
+        #victory {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            text-align: center; display: none; z-index: 30;
+            background: rgba(0,0,0,0.8); padding: 20px; border-radius: 15px;
+        }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+    <div id="start-screen">
+        <h1 style="text-shadow: 0 0 10px #00f2ff;">FACE INVADERS</h1>
+        <p>Gunakan Jarimu untuk Menggerakkan Pesawat</p>
+        <button id="start-btn">MULAI PERANG</button>
+    </div>
+
+    <div id="warning">CRITICAL ALERT<br>BOSS DETECTED</div>
+    
+    <div id="victory">
+        <h1 style="color:#00f2ff;">MISSION COMPLETE</h1>
+        <p>BOS BERHASIL DIKALAHKAN!</p>
+        <button onclick="location.reload()" style="padding: 10px; cursor:pointer;">MAIN LAGI</button>
+    </div>
+
+    <div id="ui">
+        <div id="stats">SCORE: <span id="score">0</span></div>
+        <div class="hp-container"><div id="hp-bar"></div></div>
+    </div>
+
+    <div id="boss-ui">
+        <div style="color:red; font-size:12px; margin-bottom:5px;">THE FACELESS OVERLORD</div>
+        <div class="boss-hp-bar"><div id="boss-hp"></div></div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    let score = 0, health = 100, gameActive = false, bossSpawned = false;
+    const player = { x: canvas.width / 2, y: canvas.height - 100, w: 60, h: 60, targetX: canvas.width / 2 };
+    const playerBullets = [], enemyBullets = [], enemies = [], stars = [];
+    let boss = null;
+    let audioCtx, musicOsc;
+
+    // --- Background Stars ---
+    for(let i=0; i<50; i++) {
+        stars.push({ x: Math.random()*canvas.width, y: Math.random()*canvas.height, s: Math.random()*2 + 1 });
+    }
+
+    // --- ASSETS ---
+    const imgPemain = new Image(); imgPemain.src = 'pemain.png';
+    const imgBoss = new Image(); imgBoss.src = 'boss_pesawat.png';
+    const imgPeluruMerah = new Image(); imgPeluruMerah.src = 'peluru_merah.png';
+    const imgMusuhKecil = new Image(); imgMusuhKecil.src = 'musuh.png';
+
+    // --- AUDIO FUNCTIONS ---
+    function initAudio() {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
+    function playLaser() {
+        if(!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 0.1);
+        g.gain.setValueAtTime(0.02, audioCtx.currentTime);
+        osc.connect(g); g.connect(audioCtx.destination);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+    }
+
+    function startBossMusic() {
+        if(!audioCtx) return;
+        musicOsc = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        musicOsc.type = 'sawtooth';
+        musicOsc.frequency.setValueAtTime(50, audioCtx.currentTime);
+        g.gain.setValueAtTime(0.03, audioCtx.currentTime);
+        musicOsc.connect(g); g.connect(audioCtx.destination);
+        musicOsc.start();
+    }
+
+    // --- GAME LOGIC ---
+    document.getElementById('start-btn').addEventListener('click', () => {
+        document.getElementById('start-screen').style.display = 'none';
+        initAudio(); // Audio dipicu saat klik
+        gameActive = true;
+        spawnEnemy();
+        draw();
+    });
+
+    function spawnEnemy() {
+        if (!gameActive || bossSpawned) return;
+        enemies.push({
+            x: Math.random() * (canvas.width - 50), y: -60, w: 55, h: 55,
+            hp: 40, maxHp: 40, lastShot: Date.now()
+        });
+        setTimeout(spawnEnemy, 1500);
+    }
+
+    function triggerBoss() {
+        bossSpawned = true;
+        document.getElementById('warning').style.display = 'block';
+        startBossMusic();
+        setTimeout(() => {
+            document.getElementById('warning').style.display = 'none';
+            document.getElementById('boss-ui').style.display = 'block';
+            boss = { x: canvas.width/2 - 100, y: -220, w: 200, h: 200, targetY: 70, hp: 1200, maxHp: 1200, speed: 1.5, lastShot: Date.now(), pattern: 0 };
+        }, 3000);
+    }
+
+    canvas.addEventListener("touchmove", (e) => player.targetX = e.touches[0].clientX);
+    setInterval(() => { if(gameActive) { playerBullets.push({x: player.x, y: player.y - 20, w: 15, h: 35}); playLaser(); } }, 300);
+
+    function update() {
+        if(!gameActive) return;
+        if(score >= 500 && !bossSpawned) triggerBoss();
+
+        stars.forEach(s => { s.y += 2; if(s.y > canvas.height) s.y = 0; });
+        player.x += (player.targetX - player.x) * 0.2;
+
+        playerBullets.forEach((b, i) => { b.y -= 10; if(b.y < -50) playerBullets.splice(i, 1); });
+
+        // Musuh Kecil
+        enemies.forEach((e, i) => {
+            e.y += 2;
+            if(Date.now() - e.lastShot > 2000) {
+                enemyBullets.push({x: e.x + e.w/2, y: e.y + e.h, vy: 5, color: "#00d4ff"});
+                e.lastShot = Date.now();
+            }
+            playerBullets.forEach((b, bi) => {
+                if(b.x > e.x && b.x < e.x + e.w && b.y < e.y + e.h && b.y > e.y) {
+                    e.hp -= 20; playerBullets.splice(bi, 1);
+                    if(e.hp <= 0) { enemies.splice(i, 1); score += 50; document.getElementById('score').innerText = score; }
+                }
+            });
+        });
+
+        // Peluru Musuh
+        enemyBullets.forEach((eb, i) => {
+            eb.y += eb.vy || 5; eb.x += eb.vx || 0;
+            if(Math.abs(player.x - eb.x) < 20 && Math.abs(player.y - eb.y) < 20) {
+                health -= 10; enemyBullets.splice(i, 1);
+                if(health <= 0) { gameActive = false; alert("GAME OVER"); location.reload(); }
+            }
+            if(eb.y > canvas.height) enemyBullets.splice(i, 1);
+        });
+
+        // Boss
+        if(boss) {
+            if(boss.y < boss.targetY) boss.y += 1;
+            boss.x += boss.speed;
+            if(boss.x < 10 || boss.x > canvas.width - boss.w - 10) boss.speed *= -1;
+
+            if(Date.now() - boss.lastShot > 1200) {
+                boss.pattern = (boss.pattern + 1) % 2;
+                if(boss.pattern === 0) {
+                    for(let i=0; i<3; i++) enemyBullets.push({x: boss.x + boss.w/2, y: boss.y + boss.h, vx: (i-1)*2, vy: 5, color: "red"});
+                } else {
+                    enemyBullets.push({x: boss.x, y: boss.y + 100, vx: -1, vy: 4, color: "orange"});
+                    enemyBullets.push({x: boss.x + boss.w, y: boss.y + 100, vx: 1, vy: 4, color: "orange"});
+                }
+                boss.lastShot = Date.now();
+            }
+
+            playerBullets.forEach((b, bi) => {
+                if(b.x > boss.x && b.x < boss.x + boss.w && b.y < boss.y + boss.h && b.y > boss.y) {
+                    boss.hp -= 10; playerBullets.splice(bi, 1);
+                    document.getElementById('boss-hp').style.width = (boss.hp/boss.maxHp)*100 + "%";
+                    if(boss.hp <= 0) {
+                        boss = null; document.getElementById('boss-ui').style.display = 'none';
+                        document.getElementById('victory').style.display = 'block';
+                        if(musicOsc) musicOsc.stop();
+                    }
+                }
+            });
+        }
+        document.getElementById('hp-bar').style.width = health + "%";
+    }
+
+    function draw() {
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0,0, canvas.width, canvas.height);
+        
+        ctx.fillStyle = "white";
+        stars.forEach(s => ctx.fillRect(s.x, s.y, s.s, s.s));
+
+        playerBullets.forEach(b => ctx.drawImage(imgPeluruMerah, b.x - b.w/2, b.y - b.h/2, b.w, b.h));
+        ctx.drawImage(imgPemain, player.x - player.w/2, player.y - player.h/2, player.w, player.h);
+        
+        enemies.forEach(e => {
+            ctx.drawImage(imgMusuhKecil, e.x, e.y, e.w, e.h);
+            ctx.fillStyle = "red"; ctx.fillRect(e.x, e.y - 5, e.w * (e.hp/e.maxHp), 3);
+        });
+
+        if(boss) ctx.drawImage(imgBoss, boss.x, boss.y, boss.w, boss.h);
+
+        enemyBullets.forEach(eb => {
+            ctx.fillStyle = eb.color || "white";
+            ctx.beginPath(); ctx.arc(eb.x, eb.y, 5, 0, Math.PI*2); ctx.fill();
+        });
+
+        update();
+        if(gameActive) requestAnimationFrame(draw);
+    }
+</script>
+</body>
+</html>
